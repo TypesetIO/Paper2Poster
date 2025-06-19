@@ -12,6 +12,9 @@ from marker.output import text_from_rendered
 from PIL import Image
 from torchvision.transforms.functional import InterpolationMode
 from transformers import AutoFeatureExtractor, AutoModel
+import openai
+from typing import List, Union
+from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from utils.src.presentation import Presentation, SlidePage
 from utils.src.utils import is_image_path, pjoin
@@ -52,15 +55,15 @@ def prs_dedup(
     return [presentation.slides.pop(i) for i in reversed(duplicates)]
 
 
-def get_text_model(device: str = None) -> BGEM3FlagModel:
+def get_text_model(device: str = None) -> Union[BGEM3FlagModel]:
     """
     Initialize and return a text model.
-
+    
     Args:
-        device (str): The device to run the model on.
-
+        device (str): The device to run the model on (ignored for OpenAI).
+        
     Returns:
-        BGEM3FlagModel: The initialized text model.
+        Text embedding model (BGE-M3 or OpenAI).
     """
     return BGEM3FlagModel(
         "BAAI/bge-m3",
@@ -141,29 +144,24 @@ def parse_pdf(
 
 
 def get_text_embedding(
-    text: list[str], model: BGEM3FlagModel, batchsize: int = 32
+    text: list[str], model: Union[BGEM3FlagModel], batchsize: int = 32
 ) -> list[torch.Tensor]:
     """
     Generate text embeddings for a list of text strings.
-
-    Args:
-        text (list[str]): A list of text strings.
-        model: The model used for generating embeddings.
-        batchsize (int): The batch size for processing text.
-
-    Returns:
-        list: A list of text embeddings.
     """
-    if isinstance(text, str):
-        return torch.tensor(model.encode(text)["dense_vecs"]).to(model.device)
-    result = []
-    for i in range(0, len(text), batchsize):
-        result.extend(
-            torch.tensor(model.encode(text[i : i + batchsize])["dense_vecs"]).to(
-                model.device
+    if hasattr(model, 'encode') and hasattr(model, 'model_name'):  # OpenAI model
+        return model.encode(text, batch_size=batchsize)
+    else:  # BGE-M3 model
+        if isinstance(text, str):
+            return torch.tensor(model.encode(text)["dense_vecs"]).to(model.device)
+        result = []
+        for i in range(0, len(text), batchsize):
+            result.extend(
+                torch.tensor(model.encode(text[i : i + batchsize])["dense_vecs"]).to(
+                    model.device
+                )
             )
-        )
-    return result
+        return result
 
 
 def get_image_embedding(
@@ -295,3 +293,4 @@ def get_cluster(similarity: np.ndarray, sim_bound: float = 0.65):
             similarity[j, :] = 0
             similarity[:, j] = 0
     return clusters
+
