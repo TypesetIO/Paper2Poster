@@ -4,6 +4,9 @@ import subprocess
 
 from PIL import Image
 import json
+from .logger_config import get_logger
+
+logger = get_logger(__name__)
 
 def generate_meta_json(base_dir='Paper2Poster-data'):
     # Loop over each item in the specified base directory
@@ -32,11 +35,11 @@ def generate_meta_json(base_dir='Paper2Poster-data'):
                     with open(meta_json_path, 'w') as json_file:
                         json.dump(metadata, json_file)
                     
-                    print(f"Metadata for '{folder_name}' saved successfully.")
+                    logger.info(f"Metadata for '{folder_name}' saved successfully.")
                 except Exception as e:
-                    print(f"Error processing image in folder '{folder_name}': {e}")
+                    logger.error(f"Error processing image in folder '{folder_name}': {e}")
             else:
-                print(f"No poster.png found in folder '{folder_name}'.")
+                logger.warning(f"No poster.png found in folder '{folder_name}'.")
 
 if __name__ == "__main__":
     dataset = load_dataset("Paper2Poster/Paper2Poster", split="train")
@@ -56,14 +59,14 @@ if __name__ == "__main__":
         qa_dict = json.loads(qa)
         with open(qa_path, 'w') as f:
             json.dump(qa_dict, f, indent=4)
-        print(f"Saved QA for {paper_title} into {qa_path}")
+        logger.info(f"Saved QA for {paper_title} into {qa_path}")
 
         try:
             subprocess.run(['wget', paper_url, '-O', paper_output_path], check=True)
             subprocess.run(['wget', poster_url, '-O', poster_output_path], check=True)
-            print(f"Downloaded {poster_url} into {poster_output_path}")
-            print(f"Downloaded {paper_url} into {paper_output_path}")
+            logger.info(f"Downloaded {poster_url} into {poster_output_path}")
+            logger.info(f"Downloaded {paper_url} into {paper_output_path}")
         except subprocess.CalledProcessError as e:
-            print(f"Error downloading {paper_url} or {poster_url}: {e}")
+            logger.error(f"Error downloading {paper_url} or {poster_url}: {e}")
 
     generate_meta_json('Paper2Poster-data')

@@ -9,6 +9,7 @@ from . import (
     gen_poster_content,
     gen_pptx_code,
     # LLM_direct_generate,
+    logger_config,
     new_pipeline,
     parse_raw,
     poster_gen_pipeline,

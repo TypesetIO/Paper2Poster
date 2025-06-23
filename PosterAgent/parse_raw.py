@@ -8,6 +8,9 @@ from camel.models import ModelFactory
 from camel.agents import ChatAgent
 from tenacity import retry, stop_after_attempt
 from docling_core.types.doc import ImageRefMode, PictureItem, TableItem
+from .logger_config import get_logger, log_token_consumption, log_error_and_retry
+
+logger = get_logger(__name__)
 
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions
@@ -53,7 +56,7 @@ def parse_raw(args, actor_config, version=1):
     text_content = markdown_clean_pattern.sub("", raw_markdown)
 
     if len(text_content) < 500:
-        print('\nParsing with docling failed, using marker instead\n')
+        logger.warning('Parsing with docling failed, using marker instead')
         parser_model = create_model_dict(device='cuda', dtype=torch.float16)
         text_content, rendered = parse_pdf(raw_source, model_lst=parser_model, save_file=False)
 
@@ -97,7 +100,7 @@ def parse_raw(args, actor_config, version=1):
 
         if len(content_json) > 0:
             break
-        print('Error: Empty response, retrying...')
+        logger.warning('Error: Empty response, retrying...')
         if args.model_name_t.startswith('vllm_qwen'):
             text_content = text_content[:80000]
 
@@ -110,14 +113,14 @@ def parse_raw(args, actor_config, version=1):
 
     for section in content_json['sections']:
         if type(section) != dict or not 'title' in section or not 'content' in section:
-            print(f"Ouch! The response is invalid, the LLM is not following the format :(")
-            print('Trying again...')
+            logger.error("Response is invalid, the LLM is not following the format")
+            logger.warning('Trying again...')
             raise
         if 'title' in section['title'].lower():
             has_title = True
 
     if not has_title:
-        print('Ouch! The response is invalid, the LLM is not following the format :(')
+        logger.error('Response is invalid, the LLM is not following the format')
         raise
 
     os.makedirs('contents', exist_ok=True)
@@ -233,4 +236,4 @@ if __name__ == '__main__':
     # Generate images and tables
     _, _ = gen_image_and_table(args)
 
-    print(f'Token consumption: {input_token} -> {output_token}')
+    log_token_consumption(logger, 'Parse Raw', input_token, output_token)

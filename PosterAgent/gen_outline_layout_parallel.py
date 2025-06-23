@@ -22,6 +22,9 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import concurrent.futures
 import sys
+from .logger_config import get_logger, log_token_consumption, log_error_and_retry
+
+logger = get_logger(__name__)
 
 load_dotenv()
 
@@ -128,7 +131,7 @@ def layout_h2_process_section(
       - input token count,
       - output token count
     """
-    print(f'Generating h2 for section {section}...', flush=True)
+    logger.info(f'Generating h2 for section {section}...')
 
     # 1) Create the prompt
     section_outline = {section: outline_no_sub_locations[section]}
@@ -193,7 +196,7 @@ def layout_process_section(
         (section_index, updated_log, input_tokens, output_tokens)
     """
     curr_section = sections[section_index]
-    print(f'Generating h1 layout for section {curr_section}...')
+    logger.info(f'Generating h1 layout for section {curr_section}...')
 
     # Build outline JSON just for current section
     new_section_outline = {curr_section: new_outline[curr_section]}
@@ -226,7 +229,7 @@ def layout_process_section(
     )
     
     if section_logs[-1]['error'] is not None:
-        print(f'Failed to generate layout for section {curr_section}.')
+        logger.error(f'Failed to generate layout for section {curr_section}.')
         return None
 
     in_toks, out_toks = section_logs[-1]['cumulative_tokens']
@@ -621,7 +624,7 @@ def gen_outline_layout(args, actor_config, critic_config):
 
     attempt = 0
     while True:
-        print(f'Generating outline attempt {attempt}...', flush=True)
+        logger.info(f'Generating outline attempt {attempt}...')
         planner_prompt = outline_template.render(**planner_jinja_args)
         planner_agent.reset()
         response = planner_agent.step(planner_prompt)
@@ -678,7 +681,7 @@ get_visual_cues(name_to_hierarchy, identifier, poster_path)
 '''
         output, error = run_code_with_utils(concatenated_code, utils_functions)
         if error is not None:
-            print(error, flush=True)
+            logger.error(error)
             attempt += 1
             continue
 
@@ -719,7 +722,7 @@ get_visual_cues(name_to_hierarchy, identifier, poster_path)
         )
 
         if len(bbox_check_result) != 0:
-            print(bbox_check_result, flush=True)
+            logger.error(bbox_check_result)
             attempt += 1
             continue
 
@@ -730,11 +733,11 @@ get_visual_cues(name_to_hierarchy, identifier, poster_path)
         total_input_token += input_token
         total_output_token += output_token
         if response.msgs[0].content == 'T':
-            print('Blank area detected.', flush=True)
+            logger.error('Blank area detected.')
             attempt += 1
             continue
 
-        print('Sucessfully generated outline.', flush=True)
+        logger.info('Sucessfully generated outline.')
 
         break
 
@@ -860,7 +863,7 @@ get_visual_cues(name_to_hierarchy, identifier, poster_path)
                 gen_layout_cumulative_output_token += out_toks
 
             except Exception as exc:
-                print(f"[ERROR] A section failed: {exc}", flush=True)
+                logger.error(f"[ERROR] A section failed: {exc}")
                 # Possibly re-raise if you want to stop everything on error
                 # raise
 
@@ -883,7 +886,7 @@ get_visual_cues(name_to_hierarchy, identifier, poster_path)
 '''
     output, error = run_code(concatenated_code)
     if error is not None:
-        print(f'Failed to generate layout for section {curr_section}.')
+        logger.error(f'Failed to generate layout for section {curr_section}.')
 
     consumption_log['h1_actor'].append((layout_cumulative_input_token, layout_cumulative_output_token))
     total_input_token += gen_layout_cumulative_input_token
@@ -943,7 +946,7 @@ if __name__ == '__main__':
         args.poster_name = args.poster_path.split('/')[-1].replace('.pdf', '').replace(' ', '_')
 
     input_token, output_token = filter_image_table(args, actor_config)
-    print(f'Token consumption: {input_token} -> {output_token}', flush=True)
+    log_token_consumption(logger, 'Filter Image Table', input_token, output_token)
 
     input_token, output_token = gen_outline_layout(args, actor_config, critic_config)
-    print(f'Token consumption: {input_token} -> {output_token}', flush=True)
+    log_token_consumption(logger, 'Gen Outline Layout', input_token, output_token)

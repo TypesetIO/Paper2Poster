@@ -6,6 +6,9 @@ import numpy as np
 from sklearn.linear_model import LinearRegression, LogisticRegression
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from .logger_config import get_logger, log_token_consumption, log_error_and_retry
+
+logger = get_logger(__name__)
 
 def parse_xml_with_recovery(xml_file_path):
     parser = etree.XMLParser(recover=True)
@@ -593,7 +596,7 @@ def generate_constrained_layout(paper_panels, poster_w, poster_h, title_height_r
         title_panel = next(p for p in paper_panels if ('title' in p["section_name"].lower()))
         other_panels = [p for p in paper_panels if ('title' not in p["section_name"].lower())]
     except StopIteration:
-        print('Oops, no title found, please try again.')
+        logger.error('Oops, no title found, please try again.')
         raise
 
     title_h = poster_h * title_height_ratio
@@ -630,9 +633,9 @@ def main_inference(
         p["rp"] = rp
 
     layout_loss, panel_arrangement = generate_constrained_layout(paper_panels, poster_width, poster_height, title_height_ratio=0.1)
-    print("Panel layout cost:", layout_loss)
+    logger.info(f"Panel layout cost: {layout_loss}")
     for p in panel_arrangement:
-        print("Panel:", p)
+        logger.info(f"Panel: {p}")
 
     panel_map = {}
     for p in paper_panels:

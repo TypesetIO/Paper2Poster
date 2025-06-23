@@ -18,6 +18,9 @@ import shutil
 from jinja2 import Environment, StrictUndefined
 from concurrent.futures import ThreadPoolExecutor
 import copy
+from .logger_config import get_logger, log_token_consumption, log_error_and_retry
+
+logger = get_logger(__name__)
 
 load_dotenv()
 
@@ -61,7 +64,7 @@ def process_leaf_section(
 
     num_rounds = 0
     while True:
-        print(f"Section: {section_name}, Leaf Section: {leaf_section}, Round: {num_rounds}")
+        logger.info(f"Section: {section_name}, Leaf Section: {leaf_section}, Round: {num_rounds}")
         num_rounds += 1
         if num_rounds > MAX_ATTEMPTS:
             break
@@ -117,7 +120,7 @@ def process_leaf_section(
                 break
 
         feedback = get_json_from_response(resp)
-        print(feedback)
+        logger.info(f"Feedback: {feedback}")
 
         jinja_args = {
             'content_json': content[leaf_section] if leaf_section in content
@@ -482,4 +485,4 @@ if __name__ == '__main__':
     
     input_token, output_token = deoverflow(args, actor_config, critic_config)
 
-    print(f'Token consumption: {input_token} -> {output_token}')
+    log_token_consumption(logger, 'Deoverflow', input_token, output_token)

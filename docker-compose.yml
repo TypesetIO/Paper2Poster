@@ -1,0 +1,96 @@
+services:
+  paper2poster:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: paper2poster-app
+    environment:
+      - PYTHONPATH=/app
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GOOGLE_AI_API_KEY=${GOOGLE_AI_API_KEY:-}
+      - SKIP_MODEL_DOWNLOAD=${SKIP_MODEL_DOWNLOAD:-false}
+    volumes:
+      # Mount input/output directories
+      - ./input_papers:/app/input_papers
+      - ./output_posters:/app/output_posters
+      - ./tmp:/app/tmp
+      - ./contents:/app/contents
+      - ./tree_splits:/app/tree_splits
+      - ./images_and_tables:/app/images_and_tables
+      - ./generated_posters:/app/generated_posters
+      # Mount for model cache (required for OCR/parsing models)
+      - ./model_cache:/app/model_cache
+      # Mount for Docling cache
+      - ./model_cache/docling:/root/.cache/docling
+      # Mount environment file
+      - ./.env:/app/.env:ro
+    working_dir: /app
+    ports:
+      - "6025:6025"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6025/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    profiles:
+      - default
+
+  # Optional: vLLM service for local model deployment
+  vllm-server:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-server
+    ports:
+      - "8000:8000"
+    environment:
+      - MODEL_NAME=Qwen/Qwen2.5-7B-Instruct
+    command: >
+      --model Qwen/Qwen2.5-7B-Instruct
+      --host 0.0.0.0
+      --port 8000
+      --served-model-name vllm_qwen
+    volumes:
+      - ./model_cache:/root/.cache/huggingface
+    profiles:
+      - vllm
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # Optional: vLLM VL service for vision-language models
+  vllm-vl-server:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-vl-server
+    ports:
+      - "8001:8001"
+    environment:
+      - MODEL_NAME=Qwen/Qwen2.5-VL-7B-Instruct
+    command: >
+      --model Qwen/Qwen2.5-VL-7B-Instruct
+      --host 0.0.0.0
+      --port 8001
+      --served-model-name vllm_qwen_vl
+    volumes:
+      - ./model_cache:/root/.cache/huggingface
+    profiles:
+      - vllm
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  model_cache:
+    driver: local
+
+networks:
+  default:
+    name: paper2poster-network 

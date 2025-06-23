@@ -1,0 +1,94 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files and directories
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Logs
+*.log
+logs/
+
+# Generated content directories (will be mounted as volumes)
+<4o_4o>_images_and_tables/
+<4o_4o>_generated_posters/
+model_cache/
+output_posters/
+input_papers/
+
+# Documentation
+*.md
+docs/
+
+# Docker files
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Node modules (if any)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/ 

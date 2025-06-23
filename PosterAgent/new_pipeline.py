@@ -6,11 +6,14 @@ from PosterAgent.gen_pptx_code import generate_poster_code
 from utils.src.utils import ppt_to_images
 from PosterAgent.gen_poster_content import gen_bullet_point_content
 from utils.ablation_utils import no_tree_get_layout
+from .logger_config import get_logger, log_token_consumption, log_progress
 
 import argparse
 import json
 import os
 import time
+
+logger = get_logger(__name__)
 
 units_per_inch = 25
 
@@ -90,7 +93,7 @@ if __name__ == '__main__':
         poster_width  = poster_width_inches  * units_per_inch
         poster_height = poster_height_inches * units_per_inch
 
-    print(f'Poster size: {poster_width_inches} x {poster_height_inches} inches')
+    logger.info(f'Poster size: {poster_width_inches} x {poster_height_inches} inches')
 
     total_input_tokens_t, total_output_tokens_t = 0, 0
     total_input_tokens_v, total_output_tokens_v = 0, 0
@@ -102,7 +105,7 @@ if __name__ == '__main__':
 
     _, _, images, tables = gen_image_and_table(args, raw_result)
 
-    print(f'Parsing token consumption: {input_token} -> {output_token}')
+    log_token_consumption(logger, 'Parsing', input_token, output_token)
 
     detail_log['parser_in_t'] = input_token
     detail_log['parser_out_t'] = output_token
@@ -112,7 +115,7 @@ if __name__ == '__main__':
     input_token, output_token = filter_image_table(args, agent_config_t)
     total_input_tokens_t += input_token
     total_output_tokens_t += output_token
-    print(f'Filter figures token consumption: {input_token} -> {output_token}')
+    log_token_consumption(logger, 'Filter figures', input_token, output_token)
 
     detail_log['filter_in_t'] = input_token
     detail_log['filter_out_t'] = output_token
@@ -121,7 +124,7 @@ if __name__ == '__main__':
     input_token, output_token, panels, figures = gen_outline_layout_v2(args, agent_config_t)
     total_input_tokens_t += input_token
     total_output_tokens_t += output_token
-    print(f'Outline token consumption: {input_token} -> {output_token}')
+    log_token_consumption(logger, 'Outline', input_token, output_token)
 
     detail_log['outline_in_t'] = input_token
     detail_log['outline_out_t'] = output_token
@@ -136,7 +139,7 @@ if __name__ == '__main__':
         )
         total_input_tokens_t += input_token
         total_output_tokens_t += output_token
-        print(f'No tree layout token consumption: {input_token} -> {output_token}')
+        log_token_consumption(logger, 'No tree layout', input_token, output_token)
         detail_log['no_tree_layout_in_t'] = input_token
         detail_log['no_tree_layout_out_t'] = output_token
     else:
@@ -213,12 +216,12 @@ if __name__ == '__main__':
 
     # Step 5: Generate content
     input_token_t, output_token_t, input_token_v, output_token_v = gen_bullet_point_content(args, agent_config_t, agent_config_v, tmp_dir=args.tmp_dir)
-    total_input_tokens_t += input_token
-    total_output_tokens_t += output_token
+    total_input_tokens_t += input_token_t
+    total_output_tokens_t += output_token_t
     total_input_tokens_v += input_token_v
     total_output_tokens_v += output_token_v
-    print(f'Content generation token consumption T: {input_token_t} -> {output_token_t}')
-    print(f'Content generation token consumption V: {input_token_v} -> {output_token_v}')
+    log_token_consumption(logger, 'Content generation (T)', input_token_t, output_token_t)
+    log_token_consumption(logger, 'Content generation (V)', input_token_v, output_token_v)
 
     bullet_content = json.load(open(f'contents/<{args.model_name_t}_{args.model_name_v}>_{args.poster_name}_bullet_point_content_{args.index}.json', 'r'))
 
@@ -264,10 +267,10 @@ if __name__ == '__main__':
     # Step 9: Move poster.pptx to the output directory
     pptx_path = os.path.join(output_dir, f'{poster_name}.pptx')
     os.rename(f'{args.tmp_dir}/poster.pptx', pptx_path)
-    print(f'Poster PowerPoint saved to {pptx_path}')
+    logger.info(f'Poster PowerPoint saved to {pptx_path}')
     # Step 10: Convert the PowerPoint to images
     ppt_to_images(pptx_path, output_dir)
-    print(f'Poster images saved to {output_dir}')
+    logger.info(f'Poster images saved to {output_dir}')
 
     end_time = time.time()
     time_taken = end_time - start_time

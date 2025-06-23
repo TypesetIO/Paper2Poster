@@ -11,6 +11,9 @@ from utils.src.utils import ppt_to_images
 from PIL import Image
 
 from utils.wei_utils import *
+from .logger_config import get_logger, log_token_consumption, log_progress
+
+logger = get_logger(__name__)
 
 from utils.pptx_utils import *
 from utils.critic_utils import *
@@ -44,7 +47,7 @@ def gen_content_process_section(
     result_json = None
     
     while True:
-        print(f"[Thread] Generating content for section: {section_name}")
+        log_progress(logger, 'GenContent', f"[Thread] Generating content for section: {section_name}")
         
         if len(section_outline) == 0:
             # Initialize the section outline
@@ -76,7 +79,7 @@ def gen_content_process_section(
             # No more adjustments needed
             break
         
-        print(f"[Thread] Adjusting text length for section: {section_name}...")
+        log_progress(logger, 'GenContent', f"[Thread] Adjusting text length for section: {section_name}...")
         
         num_attempts += 1
         if num_attempts >= MAX_ATTEMPT:
@@ -281,7 +284,7 @@ def gen_bullet_point_content(args, actor_config, critic_config, agent_modify=Fal
     text_arrangement_index = 2 # Skip the poster title and author and the first section title
 
     for i in range(1, len(raw_content['sections'])):
-        print(f'Generating bullet point content for section {raw_content["sections"][i]["title"]}...')
+        log_progress(logger, 'GenContent', f'Generating bullet point content for section {raw_content["sections"][i]["title"]}...')
         arrangement = panels[i]
         if arrangement['gp'] > 0:
             num_textboxes = 2
@@ -320,7 +323,7 @@ def gen_bullet_point_content(args, actor_config, critic_config, agent_modify=Fal
         while True:
             num_attempts += 1
             if num_attempts > max_attempts:
-                print('Too many attempts, breaking...')
+                logger.warning('Too many attempts, breaking...')
                 result_json = old_result_json
                 break
 
@@ -335,7 +338,7 @@ def gen_bullet_point_content(args, actor_config, critic_config, agent_modify=Fal
             if total_bullet_length > total_expected_length:
                 percentage_to_shrink = int((total_bullet_length - total_expected_length) / total_bullet_length * 100)
                 percentage_to_shrink = min(90, percentage_to_shrink + 10) # Be a bit aggressive
-                print('Ajdusting length ...')
+                logger.info('Adjusting length ...')
                 old_result_json = copy.deepcopy(result_json)
                 response = actor_agent.step('Too long, please shorten the bullet points by ' + str(percentage_to_shrink) + '%.')
                 input_token, output_token = account_token(response)
@@ -381,9 +384,9 @@ def gen_bullet_point_content(args, actor_config, critic_config, agent_modify=Fal
                 total_output_token_v += output_token
                 if response.msgs[0].content.lower() in ['1', '1.', '"1"', "'1'"]:
                     if curr_round > 10:
-                        print('Too many rounds of modification, breaking...')
+                        logger.warning('Too many rounds of modification, breaking...')
                         break
-                    print('Text overflow detected, modifying...')
+                    logger.info('Text overflow detected, modifying...')
                     if agent_modify:
                         modify_message = f'{bullet_content} is too long, please shorten that part, other content should stay the same. Return the entire modified JSON.'
                         response = actor_agent.step(modify_message)
@@ -396,12 +399,12 @@ def gen_bullet_point_content(args, actor_config, critic_config, agent_modify=Fal
                     continue
                 elif response.msgs[0].content.lower() in ['2', '2.', '"2"', "'2'"]:
                     if args.no_blank_detection:
-                        print('No blank space detection, skipping...')
+                        logger.info('No blank space detection, skipping...')
                         break
                     if curr_round > 10:
-                        print('Too many rounds of modification, breaking...')
+                        logger.warning('Too many rounds of modification, breaking...')
                         break
-                    print('Too much blank space detected, modifying...')
+                    logger.info('Too much blank space detected, modifying...')
                     modify_message = f'{bullet_content} is too short, please add one more bullet point, other content should stay the same. Return the entire modified JSON.'
                     response = actor_agent.step(modify_message)
                     input_token, output_token = account_token(response)
@@ -413,7 +416,7 @@ def gen_bullet_point_content(args, actor_config, critic_config, agent_modify=Fal
 
         bullet_point_content.append(result_json)
         text_arrangement_index = text_arrangement_index + num_textboxes + 1
-        print(text_arrangement_index)
+        logger.debug(f"Text arrangement index: {text_arrangement_index}")
 
     title_json, title_input_token, title_output_token = gen_poster_title_content(args, actor_config)
     total_input_token_t += title_input_token
@@ -490,4 +493,4 @@ if __name__ == '__main__':
 
     input_token, output_token = gen_poster_content(args, actor_config)
 
-    print(f'Token consumption: {input_token} -> {output_token}')
+    log_token_consumption(logger, 'Generate Poster Content', input_token, output_token)

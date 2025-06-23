@@ -7,6 +7,9 @@ from camel.models import ModelFactory
 from camel.agents import ChatAgent
 
 from utils.wei_utils import *
+from .logger_config import get_logger, log_token_consumption, log_progress
+
+logger = get_logger(__name__)
 
 from camel.messages import BaseMessage
 from PIL import Image
@@ -99,7 +102,7 @@ def poster_apply_theme(args, actor_config, critic_config):
 
     for aspect, prompt_types in theme_aspects.items():
         for prompt_type in prompt_types:
-            print(f'Getting style for {prompt_type}')
+            logger.info(f'Getting style for {prompt_type}')
             with open(f"prompt_templates/theme_templates/theme_{prompt_type}.txt", "r") as f:
                 prompt = f.read()
             msg = BaseMessage.make_user_message(
@@ -160,11 +163,11 @@ def poster_apply_theme(args, actor_config, critic_config):
     title_actor_template = jinja_env.from_string(title_theme_actor_config["template"])
 
     # Title section
-    print(f'Processing section {sections[0]}')
+    log_progress(logger, 'ApplyTheme', f'Processing section {sections[0]}')
     curr_title_code = non_overlap_code[sections[0]]
     for style in ['background', 'title']:
         for sub_style in theme_styles[style].keys():
-            print(f'    Applying theme for {sub_style}')
+            logger.info(f'    Applying theme for {sub_style}')
             jinja_args = {
                 'style_json': {sub_style: theme_styles[style][sub_style]},
                 'function_docs': documentation,
@@ -203,11 +206,11 @@ def poster_apply_theme(args, actor_config, critic_config):
         curr_subsection = list(style_dict.keys())[0]
         curr_section = style_dict[curr_subsection]['section']
         section_index = sections.index(curr_section)
-        print(f'Processing section {curr_section}')
+        log_progress(logger, 'ApplyTheme', f'Processing section {curr_section}')
         if prev_section != curr_section:
             prev_section = curr_section
             curr_section_code = non_overlap_code[curr_section]
-        print(f'    Applying theme for {curr_subsection}')
+        logger.info(f'    Applying theme for {curr_subsection}')
         jinja_args = {
             'style_json': json.dumps({curr_subsection: style_dict[curr_subsection]['style']}, indent=4),
             'function_docs': documentation,
@@ -278,4 +281,4 @@ if __name__ == '__main__':
     
     input_token, output_token = poster_apply_theme(args, actor_config, critic_config)
 
-    print(f'Token consumption: {input_token} -> {output_token}')
+    log_token_consumption(logger, 'Apply Theme', input_token, output_token)

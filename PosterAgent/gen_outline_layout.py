@@ -13,8 +13,12 @@ from camel.messages import BaseMessage
 
 from utils.pptx_utils import *
 from utils.wei_utils import *
+from .logger_config import get_logger, log_token_consumption, log_error_and_retry
+
+logger = get_logger(__name__)
 
 import pickle as pkl
+
 import argparse
 
 load_dotenv()
@@ -360,7 +364,7 @@ def gen_outline_layout_v2(args, actor_config):
         message_window_size=10,
     )
 
-    print(f'Generating outline...')
+    logger.info('Generating outline...')
     planner_prompt = outline_template.render(**planner_jinja_args)
     planner_agent.reset()
     response = planner_agent.step(planner_prompt)
@@ -370,7 +374,7 @@ def gen_outline_layout_v2(args, actor_config):
 
     figure_arrangement = get_json_from_response(response.msgs[0].content)
 
-    print(f'Figure arrangement: {json.dumps(figure_arrangement, indent=4)}')
+    logger.info(f'Figure arrangement: {json.dumps(figure_arrangement, indent=4)}')
 
     arranged_images = {}
     arranged_tables = {}
@@ -539,7 +543,7 @@ def gen_outline_layout(args, actor_config, critic_config):
 
     attempt = 0
     while True:
-        print(f'Generating outline attempt {attempt}...')
+        logger.info(f'Generating outline attempt {attempt}...')
         planner_prompt = outline_template.render(**planner_jinja_args)
         planner_agent.reset()
         response = planner_agent.step(planner_prompt)
@@ -575,8 +579,8 @@ def gen_outline_layout(args, actor_config, critic_config):
         layout_cumulative_input_token = 0
         layout_cumulative_output_token = 0
 
-        print('Generating h1 layout...\n')
-        print(f'Generating h1 layout for section {curr_section}...')
+        logger.info('Generating h1 layout...\n')
+        logger.info(f'Generating h1 layout for section {curr_section}...')
         logs[curr_section] = gen_layout(
             init_actor_agent, 
             init_prompt, 
@@ -593,7 +597,7 @@ def gen_outline_layout(args, actor_config, critic_config):
 
         for section_index in range(1, len(sections)):
             curr_section = sections[section_index]
-            print(f'generating h1 layout for section {curr_section}...')
+            logger.info(f'generating h1 layout for section {curr_section}...')
             new_section_outline = {curr_section: new_outline[curr_section]}
             new_section_jinja_args = {
                 'json_outline': new_section_outline,
@@ -652,7 +656,7 @@ def gen_outline_layout(args, actor_config, critic_config):
         )
 
         if len(bbox_check_result) != 0:
-            print(bbox_check_result)
+            logger.error(bbox_check_result)
             attempt += 1
             continue
 
@@ -663,7 +667,7 @@ def gen_outline_layout(args, actor_config, critic_config):
         total_input_token += input_token
         total_output_token += output_token
         if response.msgs[0].content == 'T':
-            print('Blank area detected.')
+            logger.error('Blank area detected.')
             attempt += 1
             continue
 
@@ -692,7 +696,7 @@ def gen_outline_layout(args, actor_config, critic_config):
     
     for section in sections:
         while True:
-            print(f'generating h2 for section {section}...')
+            logger.info(f'generating h2 for section {section}...')
             section_outline = {section: outline_no_sub_locations[section]}
             section_jinja_args = {
                 'section_outline': json.dumps(section_outline, indent=4),
@@ -766,7 +770,7 @@ def gen_outline_layout(args, actor_config, critic_config):
 
     for section_index in range(1, len(sections)):
         curr_section = sections[section_index]
-        print(f'generating section {curr_section}...')
+        logger.info(f'generating section {curr_section}...')
         new_section_outline = {curr_section: new_outline[curr_section]}
         new_section_jinja_args = {
             'json_outline': new_section_outline,
@@ -845,7 +849,7 @@ if __name__ == '__main__':
         args.poster_name = args.poster_path.split('/')[-1].replace('.pdf', '').replace(' ', '_')
 
     input_token, output_token = filter_image_table(args, actor_config)
-    print(f'Token consumption: {input_token} -> {output_token}')
+    log_token_consumption(logger, 'Filter Image Table', input_token, output_token)
 
     input_token, output_token = gen_outline_layout(args, actor_config, critic_config)
-    print(f'Token consumption: {input_token} -> {output_token}')
+    log_token_consumption(logger, 'Gen Outline Layout', input_token, output_token)

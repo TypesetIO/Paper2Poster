@@ -10,6 +10,9 @@ from camel.configs import ChatGPTConfig, QwenConfig
 from camel.agents import ChatAgent
 
 from utils.wei_utils import fill_content
+from .logger_config import get_logger, log_token_consumption, log_progress
+
+logger = get_logger(__name__)
 
 from camel.messages import BaseMessage
 from PIL import Image
@@ -65,7 +68,7 @@ def fill_poster_content(args, actor_config):
         section_name = sections[section_index]
         section_code = logs[section_name][-1]['code']
 
-        print(f'Filling content for {section_name}')
+        log_progress(logger, 'FillContent', f'Filling content for {section_name}')
 
         jinja_args = {
             'content_json': poster_content[section_name],
@@ -146,7 +149,7 @@ def stylize_poster(args, actor_config):
         section_outline = json.dumps(outline[section_name])
         section_code = content_logs[section_name][-1]['code']
 
-        print(f'Stylizing for {section_name}')
+        log_progress(logger, 'StylizeContent', f'Stylizing for {section_name}')
 
         img_ratio_json = get_img_ratio_in_section(poster_content[section_name])
 
@@ -212,4 +215,4 @@ if __name__ == '__main__':
     total_input_token = fill_total_input_token + style_total_input_token
     total_output_token = fill_total_output_token + style_total_output_token
 
-    print(f'Token consumption: {total_input_token} -> {total_output_token}')
+    log_token_consumption(logger, 'Fill and Style', total_input_token, total_output_token)

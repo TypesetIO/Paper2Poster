@@ -6,6 +6,9 @@ from camel.models import ModelFactory
 from camel.agents import ChatAgent
 
 from utils.wei_utils import *
+from .logger_config import get_logger, log_token_consumption, log_progress
+
+logger = get_logger(__name__)
 
 from camel.messages import BaseMessage
 from PIL import Image
@@ -106,7 +109,7 @@ def deoverflow(args, actor_config, critic_config):
                 leaf_name = outline[section_name]['subsections'][leaf_section]['name']
             num_rounds = 0
             while True:
-                print(f"Section: {section_name}, Leaf Section: {leaf_section}, Round: {num_rounds}")
+                log_progress(logger, 'Deoverflow', f"Section: {section_name}, Leaf Section: {leaf_section}, Round: {num_rounds}")
                 num_rounds += 1
                 if num_rounds > MAX_ATTEMPTS:
                     break
@@ -154,7 +157,7 @@ def deoverflow(args, actor_config, critic_config):
                         break
                 
                 feedback = get_json_from_response(resp)
-                print(feedback)
+                logger.debug(f"Deoverflow feedback: {feedback}")
                 jinja_args = {
                     'content_json': content[leaf_section] if leaf_section in content else content[section_name]['subsections'][leaf_section],
                     'function_docs': documentation,
@@ -231,4 +234,4 @@ if __name__ == '__main__':
     
     input_token, output_token = deoverflow(args, actor_config, critic_config)
 
-    print(f'Token consumption: {input_token} -> {output_token}')
+    log_token_consumption(logger, 'Deoverflow', input_token, output_token)

@@ -1113,11 +1113,11 @@ class ChatAgent(BaseAgent):
                 "run succesfully."
             )
 
-        logger.info(
-            f"Model {self.model_backend.model_type}, "
-            f"index {self.model_backend.current_model_index}, "
-            f"processed these messages: {openai_messages}"
-        )
+        # logger.info(
+        #     f"Model {self.model_backend.model_type}, "
+        #     f"index {self.model_backend.current_model_index}, "
+        #     f"processed these messages: {openai_messages}"
+        # )
 
         if isinstance(response, ChatCompletion):
             output_messages, finish_reasons, usage_dict, response_id = (
