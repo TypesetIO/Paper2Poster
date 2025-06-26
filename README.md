@@ -54,11 +54,29 @@ conda install -c conda-forge poppler
 
 **API Key**
 
-Create a `.env` file in the project root and add your OpenAI API key:
+Create a `.env` file in the project root and add your OpenAI API key:
 
 ```bash
 OPENAI_API_KEY=<your_openai_api_key>
 ```
+
+**S3 Configuration (Required for API)**
+
+For the API service, set these environment variables:
+
+```bash
+S3_BUCKET_NAME=<your_s3_bucket_name>
+S3_REGION=<aws_region>  # Default: us-east-1
+S3_PREFIX=paper2poster/  # Default: paper2poster/
+AWS_ACCESS_KEY_ID=<your_aws_access_key>
+AWS_SECRET_ACCESS_KEY=<your_aws_secret_key>
+```
+
+The API service:
+- Returns immediately with an S3 path
+- Processes poster generation in the background
+- Uploads the PPTX file to S3 when complete
+- Clients poll the S3 URL for 3-5 minutes
 
 ---
 

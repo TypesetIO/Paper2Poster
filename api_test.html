@@ -174,14 +174,7 @@
                 <input type="number" id="height" value="36" min="12" max="60">
             </div>
             
-            <div class="form-group">
-                <label>Return Format:</label>
-                <div class="format-options">
-                    <label><input type="radio" name="returnType" value="pptx" checked> PowerPoint (PPTX)</label>
-                    <label><input type="radio" name="returnType" value="png"> Image (PNG)</label>
-                    <label><input type="radio" name="returnType" value="json"> Metadata (JSON)</label>
-                </div>
-            </div>
+
             
             <button type="submit" id="generateBtn">Generate Poster</button>
         </form>
@@ -209,39 +202,28 @@
                 return;
             }
             
-            const returnType = document.querySelector('input[name="returnType"]:checked').value;
-            
             formData.append('pdf_file', pdfFile);
             formData.append('model_name_t', document.getElementById('modelT').value);
             formData.append('model_name_v', document.getElementById('modelV').value);
             formData.append('poster_width_inches', document.getElementById('width').value);
             formData.append('poster_height_inches', document.getElementById('height').value);
-            formData.append('return_type', returnType);
             
             try {
                 document.getElementById('generateBtn').disabled = true;
                 document.getElementById('results').style.display = 'none';
                 
                 showStatus(
-                    '<span class="spinner"></span> Generating poster... This may take 5-15 minutes depending on the paper size.',
+                    '<span class="spinner"></span> Starting poster generation...',
                     'info'
                 );
                 
                 const startTime = Date.now();
                 
-                // Create abort controller for timeout
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 20 * 60 * 1000); // 20 minute timeout
-                
                 const response = await fetch(`${API_BASE}/generate-poster`, {
                     method: 'POST',
                     body: formData,
-                    signal: controller.signal
+                    timeout: 60000  // 60 second timeout for initial request
                 });
-                
-                clearTimeout(timeoutId);
-                
-                const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(1);
                 
                 if (!response.ok) {
                     let errorMsg = `HTTP error! status: ${response.status}`;
@@ -249,35 +231,127 @@
                         const errorData = await response.json();
                         errorMsg = errorData.error || errorData.detail || errorMsg;
                     } catch (e) {
-                        // If response is not JSON, use status text
                         errorMsg = response.statusText || errorMsg;
                     }
                     throw new Error(errorMsg);
                 }
                 
-                // Handle different return types
-                if (returnType === 'json') {
+                const contentType = response.headers.get('content-type');
+                
+                // Check if response is JSON (could be S3 mode or legacy mode)
+                if (contentType && contentType.includes('application/json')) {
                     const result = await response.json();
-                    showStatus(`✅ Poster generated successfully in ${elapsedTime} seconds!`, 'success');
-                    displayJsonResults(result);
+                    
+                    // Check if this is S3 response
+                    if (result.s3_path) {
+                        showStatus(
+                            `✅ Job started! S3 Path: ${result.s3_path}`,
+                            'success'
+                        );
+                        
+                        showStatus(
+                            `<span class="spinner"></span> Polling S3 for completion... Estimated time: 3-5 minutes`,
+                            'info'
+                        );
+                        
+                        // Convert S3 path to HTTPS URL
+                        const s3Path = result.s3_path;
+                        let s3Url;
+                        if (s3Path.startsWith('s3://')) {
+                            const parts = s3Path.substring(5).split('/', 2);
+                            const bucket = parts[0];
+                            const key = parts[1] || '';
+                            s3Url = `https://${bucket}.s3.amazonaws.com/${key}`;
+                        } else {
+                            showStatus('❌ Invalid S3 path format', 'error');
+                            document.getElementById('generateBtn').disabled = false;
+                            return;
+                        }
+                        
+                        // Poll S3 for file existence
+                        const pollInterval = 10000; // 10 seconds
+                        const maxWaitTime = 600000; // 10 minutes
+                        let pollCount = 0;
+                        
+                        const pollTimer = setInterval(async () => {
+                            pollCount++;
+                            const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(0);
+                            
+                            try {
+                                // Check if file exists
+                                const headResponse = await fetch(s3Url, { method: 'HEAD' });
+                                
+                                if (headResponse.ok) {
+                                    clearInterval(pollTimer);
+                                    showStatus(
+                                        `✅ Poster ready in ${elapsedTime} seconds!`,
+                                        'success'
+                                    );
+                                    
+                                    // Download from S3
+                                    const downloadResponse = await fetch(s3Url);
+                                    
+                                    if (downloadResponse.ok) {
+                                        const blob = await downloadResponse.blob();
+                                        const filename = `poster_${pdfFile.name.replace('.pdf', '')}.pptx`;
+                                        const url = window.URL.createObjectURL(blob);
+                                        displayFileResults(url, filename, blob.size, 'pptx');
+                                    } else {
+                                        throw new Error('Failed to download from S3');
+                                    }
+                                    
+                                    document.getElementById('generateBtn').disabled = false;
+                                    
+                                } else {
+                                    // Still processing
+                                    showStatus(
+                                        `<span class="spinner"></span> [${elapsedTime}s] Still processing...`,
+                                        'info'
+                                    );
+                                }
+                                
+                            } catch (error) {
+                                // Still processing (CORS error is expected)
+                                showStatus(
+                                    `<span class="spinner"></span> [${elapsedTime}s] Still processing...`,
+                                    'info'
+                                );
+                            }
+                            
+                            // Check for timeout
+                            if (pollCount * pollInterval >= maxWaitTime) {
+                                clearInterval(pollTimer);
+                                showStatus(
+                                    '❌ Timeout: Poster generation took longer than 10 minutes',
+                                    'error'
+                                );
+                                document.getElementById('generateBtn').disabled = false;
+                            }
+                            
+                        }, pollInterval);
+                        
+                    } else {
+                        // Legacy JSON mode
+                        const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(1);
+                        showStatus(`✅ Poster generated successfully in ${elapsedTime} seconds!`, 'success');
+                        displayJsonResults(result);
+                        document.getElementById('generateBtn').disabled = false;
+                    }
+                    
                 } else {
-                    // For PPTX or PNG, download the file
+                    // Legacy file response (PPTX or PNG)
                     const blob = await response.blob();
                     const filename = `poster_${pdfFile.name.replace('.pdf', '')}.${returnType}`;
                     const url = window.URL.createObjectURL(blob);
+                    const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(1);
                     
                     showStatus(`✅ Poster generated successfully in ${elapsedTime} seconds!`, 'success');
                     displayFileResults(url, filename, blob.size, returnType);
+                    document.getElementById('generateBtn').disabled = false;
                 }
                 
             } catch (error) {
-                if (error.name === 'AbortError') {
-                    showStatus('❌ Request timed out after 20 minutes. The server might still be processing.', 'error');
-                } else {
-                    showStatus(`❌ Error: ${error.message}`, 'error');
-                }
-                document.getElementById('generateBtn').disabled = false;
-            } finally {
+                showStatus(`❌ Error: ${error.message}`, 'error');
                 document.getElementById('generateBtn').disabled = false;
             }
         });
@@ -337,6 +411,8 @@
             contentDiv.innerHTML = html;
             resultsDiv.style.display = 'block';
         }
+        
+
         
         // Check API health on page load
         window.addEventListener('load', async () => {

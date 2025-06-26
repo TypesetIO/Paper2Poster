@@ -75,21 +75,21 @@ RUN python3.11 -m pip install --no-cache-dir \
 # Copy the entire project
 COPY . .
 
-# Create necessary directories
+# Create a non-root user first
+RUN useradd --create-home --shell /bin/bash app
+
+# Create necessary directories and set ownership
 RUN mkdir -p tmp && \
     mkdir -p contents && \
     mkdir -p tree_splits && \
     mkdir -p assets && \
-    mkdir -p model_cache
+    mkdir -p model_cache && \
+    chown -R app:app /app
 
 # Set permissions for entrypoint script
 RUN chmod +x /app/docker-entrypoint.sh && \
     chmod +x /app/start_api.py && \
     chmod +x /app/download_models.py
-
-# Create a non-root user
-RUN useradd --create-home --shell /bin/bash app && \
-    chown -R app:app /app
 
 # Switch to non-root user
 USER app

@@ -4,7 +4,10 @@ Paper2Poster API Test Script
 
 This script demonstrates how to:
 1. Upload a PDF paper to the Paper2Poster API
-2. Get the generated PowerPoint poster file directly
+2. Get S3 path where poster will be uploaded
+3. Poll for completion (3-5 minutes)
+
+Note: S3 configuration is required. Only PPTX format is supported.
 
 Usage:
     python test_api.py --pdf path/to/paper.pdf
@@ -42,6 +45,8 @@ class Paper2PosterClient:
             print(f"❌ Cannot connect to API: {e}")
             return False
     
+
+    
     def generate_poster(
         self,
         pdf_path: str,
@@ -53,11 +58,10 @@ class Paper2PosterClient:
         ablation_no_tree_layout: bool = False,
         ablation_no_commenter: bool = False,
         ablation_no_example: bool = False,
-        return_type: str = "pptx",
         output_dir: str = "."
     ) -> Optional[str]:
         """
-        Upload PDF and generate poster
+        Upload PDF and generate poster (PPTX format only)
         
         Args:
             pdf_path: Path to PDF file
@@ -69,11 +73,10 @@ class Paper2PosterClient:
             ablation_no_tree_layout: Disable tree layout
             ablation_no_commenter: Disable commenter
             ablation_no_example: Disable examples
-            return_type: Return type ('pptx', 'png', or 'json')
             output_dir: Directory to save output files
             
         Returns:
-            Path to saved file if successful, None if failed
+            Path to saved PPTX file if successful, None if failed
         """
         if not os.path.exists(pdf_path):
             print(f"❌ PDF file not found: {pdf_path}")
@@ -84,6 +87,8 @@ class Paper2PosterClient:
             # Prepare the file and data
             pdf_file = open(pdf_path, 'rb')
             files = {'pdf_file': pdf_file}
+
+            
             data = {
                 'model_name_t': model_name_t,
                 'model_name_v': model_name_v,
@@ -92,15 +97,12 @@ class Paper2PosterClient:
                 'no_blank_detection': no_blank_detection,
                 'ablation_no_tree_layout': ablation_no_tree_layout,
                 'ablation_no_commenter': ablation_no_commenter,
-                'ablation_no_example': ablation_no_example,
-                'return_type': return_type
+                'ablation_no_example': ablation_no_example
             }
             
             print(f"📤 Uploading {pdf_path} and generating poster...")
             print(f"   Models: Text={model_name_t}, Vision={model_name_v}")
             print(f"   Size: {poster_width_inches}x{poster_height_inches} inches")
-            print(f"   Return type: {return_type}")
-            print(f"   This may take several minutes...")
             
             start_time = time.time()
             
@@ -108,7 +110,7 @@ class Paper2PosterClient:
                 f"{self.base_url}/generate-poster",
                 files=files,
                 data=data,
-                timeout=1200  # 20 minute timeout
+                timeout=60  # Reduced timeout for initial request
             )
             
             elapsed_time = time.time() - start_time
@@ -117,37 +119,81 @@ class Paper2PosterClient:
                 # Ensure output directory exists
                 os.makedirs(output_dir, exist_ok=True)
                 
-                if return_type == "json":
-                    # Handle JSON response
+                # Check if response is JSON (could be S3 mode or legacy JSON mode)
+                content_type = response.headers.get('content-type', '')
+                if 'application/json' in content_type:
                     result = response.json()
-                    print(f"✅ Poster generated successfully!")
-                    print(f"   Processing time: {result.get('processing_time', 'N/A')}")
-                    print(f"   Poster size: {result.get('poster_size', 'N/A')}")
-                    if 'token_usage' in result:
-                        tokens = result['token_usage']
-                        print(f"   Token usage:")
-                        print(f"     Text: {tokens.get('input_tokens_t', 0)} → {tokens.get('output_tokens_t', 0)}")
-                        print(f"     Vision: {tokens.get('input_tokens_v', 0)} → {tokens.get('output_tokens_v', 0)}")
                     
-                    # Save JSON response
-                    json_path = os.path.join(output_dir, f"{Path(pdf_path).stem}_result.json")
-                    with open(json_path, 'w') as f:
-                        json.dump(result, f, indent=2)
-                    print(f"   Result saved to: {json_path}")
-                    return json_path
+                    # Check if request was successful
+                    if not result.get('success', False):
+                        print(f"❌ Failed to start generation: {result.get('error', 'Unknown error')}")
+                        return None
+                    
+                    # Check if this is S3 response
+                    if 's3_path' in result:
+                        print(f"✅ Job started successfully!")
+                        print(f"   S3 Path: {result['s3_path']}")
+                        print(f"   Estimated time: 3-5 minutes")
+                        
+                        # Convert S3 path to HTTPS URL
+                        s3_path = result['s3_path']
+                        if s3_path.startswith('s3://'):
+                            parts = s3_path[5:].split('/', 1)
+                            bucket = parts[0]
+                            key = parts[1] if len(parts) > 1 else ''
+                            s3_url = f"https://{bucket}.s3.amazonaws.com/{key}"
+                        else:
+                            print("❌ Invalid S3 path format")
+                            return None
+                        
+                        # Poll S3 for file existence
+                        poll_interval = 10  # seconds
+                        max_wait_time = 600  # 10 minutes
+                        
+                        print(f"\n⏳ Polling S3 for completion (checking every {poll_interval} seconds)...")
+                        
+                        while time.time() - start_time < max_wait_time:
+                            time.sleep(poll_interval)
+                            elapsed = int(time.time() - start_time)
+                            
+                            try:
+                                # Check if file exists on S3
+                                head_resp = self.session.head(s3_url, timeout=10)
+                                if head_resp.status_code == 200:
+                                    print(f"\n✅ Poster ready in {elapsed} seconds!")
+                                    
+                                    # Download from S3
+                                    print(f"📥 Downloading from: {s3_url}")
+                                    download_resp = self.session.get(s3_url, timeout=60)
+                                    
+                                    if download_resp.status_code == 200:
+                                        filename = f"{Path(pdf_path).stem}_poster.pptx"
+                                        output_path = os.path.join(output_dir, filename)
+                                        
+                                        with open(output_path, 'wb') as f:
+                                            f.write(download_resp.content)
+                                        
+                                        file_size = os.path.getsize(output_path)
+                                        print(f"✅ Downloaded: {output_path} ({file_size:,} bytes)")
+                                        return output_path
+                                    else:
+                                        print(f"❌ Failed to download from S3: {download_resp.status_code}")
+                                        return None
+                                else:
+                                    print(f"   [{elapsed}s] Still processing...", end='\r')
+                            except:
+                                print(f"   [{elapsed}s] Still processing...", end='\r')
+                        
+                        print(f"\n❌ Timeout: Poster generation took longer than {max_wait_time} seconds")
+                        return None
+                    
+                    else:
+                        print("❌ Unexpected response: S3 path not found")
+                        return None
                 
                 else:
-                    # Handle file response (PPTX or PNG)
-                    filename = f"{Path(pdf_path).stem}_poster.{return_type}"
-                    output_path = os.path.join(output_dir, filename)
-                    
-                    with open(output_path, 'wb') as f:
-                        f.write(response.content)
-                    
-                    file_size = os.path.getsize(output_path)
-                    print(f"✅ Poster generated successfully in {elapsed_time:.1f} seconds!")
-                    print(f"   File saved: {output_path} ({file_size:,} bytes)")
-                    return output_path
+                    print("❌ Unexpected response: Not JSON format")
+                    return None
             
             else:
                 print(f"❌ Failed to generate poster: {response.status_code}")
@@ -170,48 +216,7 @@ class Paper2PosterClient:
             if pdf_file:
                 pdf_file.close()
     
-    def generate_poster_all_formats(
-        self,
-        pdf_path: str,
-        output_dir: str = "./downloads",
-        **kwargs
-    ) -> Dict[str, Optional[str]]:
-        """
-        Generate poster in all available formats
-        
-        Returns:
-            Dictionary with paths to generated files
-        """
-        results = {}
-        
-        # Generate PPTX
-        print("\n📊 Generating PowerPoint presentation...")
-        results['pptx'] = self.generate_poster(
-            pdf_path,
-            return_type="pptx",
-            output_dir=output_dir,
-            **kwargs
-        )
-        
-        # Generate PNG
-        print("\n🖼️  Generating PNG image...")
-        results['png'] = self.generate_poster(
-            pdf_path,
-            return_type="png",
-            output_dir=output_dir,
-            **kwargs
-        )
-        
-        # Get JSON metadata
-        print("\n📄 Getting generation metadata...")
-        results['json'] = self.generate_poster(
-            pdf_path,
-            return_type="json",
-            output_dir=output_dir,
-            **kwargs
-        )
-        
-        return results
+
 
 
 def main():
@@ -227,8 +232,6 @@ def main():
     parser.add_argument('--ablation-no-tree-layout', action='store_true', help='Disable tree layout')
     parser.add_argument('--ablation-no-commenter', action='store_true', help='Disable commenter')
     parser.add_argument('--ablation-no-example', action='store_true', help='Disable examples')
-    parser.add_argument('--return-type', default='pptx', choices=['pptx', 'png', 'json'], help='Return type')
-    parser.add_argument('--all-formats', action='store_true', help='Generate all formats (PPTX, PNG, JSON)')
     
     args = parser.parse_args()
     
@@ -245,55 +248,25 @@ def main():
         sys.exit(1)
     
     # Generate poster
-    if args.all_formats:
-        # Generate all formats
-        print(f"\n📋 Generating poster in all formats for: {args.pdf}")
-        results = client.generate_poster_all_formats(
-            pdf_path=args.pdf,
-            output_dir=args.output_dir,
-            model_name_t=args.model_t,
-            model_name_v=args.model_v,
-            poster_width_inches=args.width,
-            poster_height_inches=args.height,
-            no_blank_detection=args.no_blank_detection,
-            ablation_no_tree_layout=args.ablation_no_tree_layout,
-            ablation_no_commenter=args.ablation_no_commenter,
-            ablation_no_example=args.ablation_no_example
-        )
-        
-        print("\n📊 Summary:")
-        success_count = sum(1 for v in results.values() if v is not None)
-        print(f"✅ Successfully generated {success_count}/3 formats")
-        
-        if results['pptx']:
-            print(f"   PowerPoint: {results['pptx']}")
-        if results['png']:
-            print(f"   PNG Image: {results['png']}")
-        if results['json']:
-            print(f"   Metadata: {results['json']}")
+    result = client.generate_poster(
+        pdf_path=args.pdf,
+        model_name_t=args.model_t,
+        model_name_v=args.model_v,
+        poster_width_inches=args.width,
+        poster_height_inches=args.height,
+        no_blank_detection=args.no_blank_detection,
+        ablation_no_tree_layout=args.ablation_no_tree_layout,
+        ablation_no_commenter=args.ablation_no_commenter,
+        ablation_no_example=args.ablation_no_example,
+        output_dir=args.output_dir
+    )
     
+    if result:
+        print(f"\n🎉 Success! Output saved to: {result}")
+        print(f"📁 Full path: {os.path.abspath(result)}")
     else:
-        # Generate single format
-        result = client.generate_poster(
-            pdf_path=args.pdf,
-            model_name_t=args.model_t,
-            model_name_v=args.model_v,
-            poster_width_inches=args.width,
-            poster_height_inches=args.height,
-            no_blank_detection=args.no_blank_detection,
-            ablation_no_tree_layout=args.ablation_no_tree_layout,
-            ablation_no_commenter=args.ablation_no_commenter,
-            ablation_no_example=args.ablation_no_example,
-            return_type=args.return_type,
-            output_dir=args.output_dir
-        )
-        
-        if result:
-            print(f"\n🎉 Success! Output saved to: {result}")
-            print(f"📁 Full path: {os.path.abspath(result)}")
-        else:
-            print("\n❌ Poster generation failed!")
-            sys.exit(1)
+        print("\n❌ Poster generation failed!")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

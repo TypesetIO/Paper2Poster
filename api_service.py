@@ -9,6 +9,8 @@ import shutil
 import logging
 import torch
 import io
+import boto3
+from botocore.exceptions import ClientError
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Query
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -28,6 +30,25 @@ from utils.ablation_utils import no_tree_get_layout
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Configure S3
+S3_BUCKET = os.environ.get('S3_BUCKET_NAME')
+S3_REGION = os.environ.get('S3_REGION', 'us-west-2')
+
+# Initialize S3 client
+s3_client = None
+if S3_BUCKET:
+    logger.info(f"Attempting to initialize S3 client for bucket: {S3_BUCKET}, region: {S3_REGION}")
+    try:
+        s3_client = boto3.client('s3', region_name=S3_REGION)
+        # Test S3 access
+        s3_client.head_bucket(Bucket=S3_BUCKET)
+        logger.info(f"S3 client initialized successfully for bucket: {S3_BUCKET}")
+    except Exception as e:
+        logger.error(f"Failed to initialize S3 client: {e}")
+        s3_client = None
+else:
+    logger.warning("S3_BUCKET_NAME environment variable is not set")
 
 # Set cache directories
 os.environ['TRANSFORMERS_CACHE'] = str(Path('model_cache').absolute())
@@ -124,13 +145,7 @@ class PosterRequest(BaseModel):
     ablation_no_commenter: bool = Field(default=False, description="Disable commenter")
     ablation_no_example: bool = Field(default=False, description="Disable examples")
 
-class PosterResponse(BaseModel):
-    success: bool
-    message: str
-    poster_size: Optional[str] = None
-    processing_time: Optional[str] = None
-    token_usage: Optional[Dict[str, int]] = None
-    error: Optional[str] = None
+
 
 class MockArgs:
     """Mock argparse.Namespace object for compatibility with existing pipeline"""
@@ -138,27 +153,66 @@ class MockArgs:
         for key, value in kwargs.items():
             setattr(self, key, value)
 
+def upload_to_s3(file_path: str, s3_key: str) -> bool:
+    """Upload a file to S3"""
+    if not s3_client or not S3_BUCKET:
+        logger.error("S3 client not initialized or S3_BUCKET not configured")
+        return False
+    
+    try:
+        s3_client.upload_file(file_path, S3_BUCKET, s3_key)
+        logger.info(f"Successfully uploaded {file_path} to s3://{S3_BUCKET}/{s3_key}")
+        return True
+    except ClientError as e:
+        logger.error(f"Failed to upload to S3: {e}")
+        return False
+
+async def process_poster_async(filename: str, file_content: bytes, request: PosterRequest, s3_key: str):
+    """Process poster generation asynchronously and upload to S3"""
+    temp_dir = None
+    try:
+        # Run the synchronous processing
+        result = process_poster_generation_sync(filename, file_content, request)
+        temp_dir = result.get("temp_dir")
+        
+        # Upload PPTX to S3
+        if 'pptx_path' in result and os.path.exists(result['pptx_path']):
+            upload_to_s3(result['pptx_path'], s3_key)
+            logger.info(f"Poster uploaded to S3: {s3_key}")
+    
+    except Exception as e:
+        logger.error(f"Failed to process poster: {e}", exc_info=True)
+    
+    finally:
+        # Clean up temporary directory
+        if temp_dir and os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+            logger.info("Cleaned up temporary directory")
+
 @app.get("/")
 async def root():
     return {
         "message": "Welcome to Paper2Poster API",
         "version": "2.0.0",
-        "endpoints": {
-            "generate_poster": "/generate-poster",
-            "generate_poster_stream": "/generate-poster-stream",
-            "health": "/health",
-            "docs": "/docs",
-            "redoc": "/redoc"
-        },
-        "description": "Direct async poster generation API. Each request waits for completion."
+        "s3_configured": s3_client is not None,
+        "description": "Asynchronous poster generation API. Returns S3 path for polling."
     }
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "timestamp": time.time()}
+    return {
+        "status": "healthy", 
+        "timestamp": time.time(),
+        "s3_configured": s3_client is not None,
+        "s3_bucket": S3_BUCKET,
+        "s3_region": S3_REGION
+    }
+
+
 
 @app.post("/generate-poster")
 async def generate_poster(
+    background_tasks: BackgroundTasks,
     pdf_file: UploadFile = File(..., description="PDF file of the scientific paper"),
     model_name_t: str = Query(default="4o", description="Text model name"),
     model_name_v: str = Query(default="4o", description="Vision model name"),
@@ -167,24 +221,26 @@ async def generate_poster(
     no_blank_detection: bool = Query(default=False, description="Disable blank detection"),
     ablation_no_tree_layout: bool = Query(default=False, description="Disable tree layout"),
     ablation_no_commenter: bool = Query(default=False, description="Disable commenter"),
-    ablation_no_example: bool = Query(default=False, description="Disable examples"),
-    return_type: str = Query(default="pptx", description="Return type: 'pptx', 'png', or 'json'")
+    ablation_no_example: bool = Query(default=False, description="Disable examples")
 ):
     """
     Generate a poster from a PDF paper.
-    Returns the poster file directly (PPTX or PNG) or JSON with metadata.
-    This is an async endpoint that waits for completion before returning.
+    
+    Returns immediately with S3 path where the poster will be uploaded.
+    Poster generation happens asynchronously in the background.
+    Client should poll the S3 path for 3-5 minutes.
+    
+    Only PPTX format is supported.
     """
     
     # Validate file type
     if not pdf_file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
     
-    # Validate return type
-    if return_type not in ["pptx", "png", "json"]:
-        raise HTTPException(status_code=400, detail="return_type must be 'pptx', 'png', or 'json'")
+    # Check if S3 is configured
+    if not s3_client or not S3_BUCKET:
+        raise HTTPException(status_code=503, detail="S3 storage is not configured. Please configure S3 environment variables.")
     
-    temp_dir = None
     try:
         # Read file content
         file_content = await pdf_file.read()
@@ -201,95 +257,33 @@ async def generate_poster(
             ablation_no_example=ablation_no_example
         )
         
-        logger.info(f"Starting poster generation for file {pdf_file.filename}")
+        # Generate unique S3 key
+        timestamp = int(time.time())
+        clean_filename = pdf_file.filename.replace('.pdf', '').replace(' ', '_')
+        s3_key = f"{clean_filename}_{timestamp}_poster.pptx"
         
-        # Run poster generation in executor to avoid blocking
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            process_poster_generation_sync,
+        logger.info(f"Starting poster generation: {s3_key}")
+        
+        # Add background task for poster generation
+        background_tasks.add_task(
+            process_poster_async,
             pdf_file.filename,
             file_content,
-            request_data
+            request_data,
+            s3_key
         )
         
-        # Store temp_dir for cleanup
-        temp_dir = result.get("temp_dir")
-        
-        # Return based on requested type
-        if return_type == "json":
-            # Return metadata as JSON
-            return JSONResponse(content={
-                "success": True,
-                "message": "Poster generated successfully",
-                "poster_size": result["poster_size"],
-                "processing_time": result["processing_time"],
-                "token_usage": result["token_usage"],
-                "filename": pdf_file.filename.replace('.pdf', '')
-            })
-        
-        elif return_type == "pptx":
-            # Return PPTX file
-            if not os.path.exists(result["pptx_path"]):
-                raise HTTPException(status_code=500, detail="PPTX file not found")
-            
-            return FileResponse(
-                result["pptx_path"],
-                media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                filename=f"{pdf_file.filename.replace('.pdf', '')}_poster.pptx"
-            )
-        
-        else:  # return_type == "png"
-            # Return PNG file
-            output_dir = result["output_dir"]
-            image_files = []
-            for ext in ['.png', '.jpg', '.jpeg']:
-                image_files.extend(Path(output_dir).glob(f"*{ext}"))
-            
-            if not image_files:
-                raise HTTPException(status_code=500, detail="No image files found")
-            
-            # Return the first image file
-            image_file = str(image_files[0])
-            return FileResponse(
-                image_file,
-                media_type="image/png",
-                filename=f"{pdf_file.filename.replace('.pdf', '')}_poster.png"
-            )
+        # Return immediately with S3 path
+        return JSONResponse(content={
+            "success": True,
+            "s3_bucket": S3_BUCKET,
+            "s3_key": s3_key
+        })
     
     except Exception as e:
-        logger.error(f"Poster generation failed: {str(e)}", exc_info=True)
-        
-        if return_type == "json":
-            return JSONResponse(
-                status_code=500,
-                content={
-                    "success": False,
-                    "message": "Poster generation failed",
-                    "error": str(e)
-                }
-            )
-        else:
-            raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Failed to start poster generation: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
     
-    finally:
-        # Clean up temporary files after a delay (to allow file download)
-        if temp_dir and os.path.exists(temp_dir):
-            try:
-                # Schedule cleanup after 60 seconds
-                asyncio.create_task(cleanup_temp_dir(temp_dir, delay=60))
-            except:
-                pass
-
-async def cleanup_temp_dir(temp_dir: str, delay: int = 60):
-    """Clean up temporary directory after a delay"""
-    await asyncio.sleep(delay)
-    try:
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-            logger.info(f"Cleaned up temporary directory: {temp_dir}")
-    except Exception as e:
-        logger.error(f"Failed to clean up {temp_dir}: {e}")
 
 def process_poster_generation_sync(filename: str, file_content: bytes, request: PosterRequest) -> Dict[str, Any]:
     """Synchronous function to process poster generation"""
@@ -548,36 +542,7 @@ def run_poster_pipeline_sync(args) -> Dict[str, Any]:
         'token_usage': log_data
     }
 
-@app.post("/generate-poster-stream")
-async def generate_poster_stream(
-    pdf_file: UploadFile = File(..., description="PDF file of the scientific paper"),
-    model_name_t: str = Query(default="4o", description="Text model name"),
-    model_name_v: str = Query(default="4o", description="Vision model name"),
-    poster_width_inches: int = Query(default=48, description="Poster width in inches"),
-    poster_height_inches: int = Query(default=36, description="Poster height in inches"),
-    no_blank_detection: bool = Query(default=False, description="Disable blank detection"),
-    ablation_no_tree_layout: bool = Query(default=False, description="Disable tree layout"),
-    ablation_no_commenter: bool = Query(default=False, description="Disable commenter"),
-    ablation_no_example: bool = Query(default=False, description="Disable examples")
-):
-    """
-    Generate a poster with streaming progress updates.
-    Returns Server-Sent Events (SSE) stream with progress updates.
-    """
-    # This is a placeholder for future streaming implementation
-    # For now, redirect to the main endpoint
-    return await generate_poster(
-        pdf_file=pdf_file,
-        model_name_t=model_name_t,
-        model_name_v=model_name_v,
-        poster_width_inches=poster_width_inches,
-        poster_height_inches=poster_height_inches,
-        no_blank_detection=no_blank_detection,
-        ablation_no_tree_layout=ablation_no_tree_layout,
-        ablation_no_commenter=ablation_no_commenter,
-        ablation_no_example=ablation_no_example,
-        return_type="json"
-    )
+
 
 if __name__ == "__main__":
     import uvicorn
