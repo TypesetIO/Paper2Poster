@@ -171,13 +171,20 @@ async def process_poster_async(filename: str, file_content: bytes, request: Post
     """Process poster generation asynchronously and upload to S3"""
     temp_dir = None
     try:
-        # Run the synchronous processing
-        result = process_poster_generation_sync(filename, file_content, request)
+        # Run the synchronous processing in a thread pool to avoid blocking the event loop
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,  # Use default ThreadPoolExecutor
+            process_poster_generation_sync,
+            filename,
+            file_content,
+            request
+        )
         temp_dir = result.get("temp_dir")
         
-        # Upload PPTX to S3
+        # Upload PPTX to S3 (also run in thread pool since it's synchronous)
         if 'pptx_path' in result and os.path.exists(result['pptx_path']):
-            upload_to_s3(result['pptx_path'], s3_key)
+            await loop.run_in_executor(None, upload_to_s3, result['pptx_path'], s3_key)
             logger.info(f"Poster uploaded to S3: {s3_key}")
     
     except Exception as e:
@@ -273,6 +280,7 @@ async def generate_poster(
             s3_key
         )
         
+        logger.info(f'Returning json response: {s3_key}')
         # Return immediately with S3 path
         return JSONResponse(content={
             "success": True,
