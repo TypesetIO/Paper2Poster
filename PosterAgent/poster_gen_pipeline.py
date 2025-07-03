@@ -9,6 +9,7 @@ from PosterAgent.fill_and_style import fill_poster_content, stylize_poster
 from PosterAgent.deoverflow import deoverflow
 from PosterAgent.apply_theme import poster_apply_theme
 from PosterAgent.logger_config import get_logger, log_token_consumption
+from PosterAgent.enhanced_token_tracker import save_token_usage_report
 
 logger = get_logger(__name__)
 
@@ -92,4 +93,8 @@ if __name__ == '__main__':
     with open(log_path, 'w') as f:
         f.write(f'Total token consumption: {total_input_token} -> {total_output_token}\n')
         f.write(f'Execution Time: {int(hours):02}:{int(minutes):02}:{int(seconds):02}\n')
+    
+    # Save detailed token usage report with costs
+    detailed_report_path = f'log/{args.model_name}_{args.poster_name}_{args.index}_token_report.json'
+    save_token_usage_report(detailed_report_path)
         

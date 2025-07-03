@@ -12,6 +12,7 @@ from PIL import Image
 
 from utils.wei_utils import *
 from .logger_config import get_logger, log_token_consumption, log_progress
+from .enhanced_token_tracker import account_token_enhanced
 
 logger = get_logger(__name__)
 
@@ -62,7 +63,10 @@ def gen_content_process_section(
         
         # Step the actor_agent and track tokens
         response = actor_agent.step(prompt)
-        input_token, output_token = account_token(response)
+        input_token, output_token = account_token_enhanced(
+            response,
+            component=f'GenContent-{section_name}'
+        )
         total_input_token += input_token
         total_output_token += output_token
         
@@ -200,7 +204,7 @@ def gen_poster_title_content(args, actor_config):
     # Step the actor_agent and track tokens
     actor_agent.reset()
     response = actor_agent.step(prompt)
-    input_token, output_token = account_token(response)
+    input_token, output_token = account_token_enhanced(response, component='GenPosterTitle')
     total_input_token += input_token
     total_output_token += output_token
     result_json = get_json_from_response(response.msgs[0].content)
@@ -311,7 +315,7 @@ def gen_bullet_point_content(args, actor_config, critic_config, agent_modify=Fal
         # Step the actor_agent and track tokens
         actor_agent.reset()
         response = actor_agent.step(prompt)
-        input_token, output_token = account_token(response)
+        input_token, output_token = account_token_enhanced(response, component='GenBulletContent')
         total_input_token_t += input_token
         total_output_token_t += output_token
 
@@ -341,7 +345,7 @@ def gen_bullet_point_content(args, actor_config, critic_config, agent_modify=Fal
                 logger.info('Adjusting length ...')
                 old_result_json = copy.deepcopy(result_json)
                 response = actor_agent.step('Too long, please shorten the bullet points by ' + str(percentage_to_shrink) + '%.')
-                input_token, output_token = account_token(response)
+                input_token, output_token = account_token_enhanced(response, component='GenBulletContent-Adjust')
                 total_input_token_t += input_token
                 total_output_token_t += output_token
 
@@ -379,7 +383,12 @@ def gen_bullet_point_content(args, actor_config, critic_config, agent_modify=Fal
                     )
                 critic_agent.reset()
                 response = critic_agent.step(critic_msg)
-                input_token, output_token = account_token(response)
+                # Use enhanced tracking for vision model call
+                input_token, output_token = account_token_enhanced(
+                    response, 
+                    component='GenContent-Critic', 
+                    messages=[critic_msg]
+                )
                 total_input_token_v += input_token
                 total_output_token_v += output_token
                 if response.msgs[0].content.lower() in ['1', '1.', '"1"', "'1'"]:
@@ -390,7 +399,7 @@ def gen_bullet_point_content(args, actor_config, critic_config, agent_modify=Fal
                     if agent_modify:
                         modify_message = f'{bullet_content} is too long, please shorten that part, other content should stay the same. Return the entire modified JSON.'
                         response = actor_agent.step(modify_message)
-                        input_token, output_token = account_token(response)
+                        input_token, output_token = account_token_enhanced(response, component='GenBulletContent-Overflow')
                         total_input_token_t += input_token
                         total_output_token_t += output_token
                         result_json = get_json_from_response(response.msgs[0].content)
@@ -407,7 +416,7 @@ def gen_bullet_point_content(args, actor_config, critic_config, agent_modify=Fal
                     logger.info('Too much blank space detected, modifying...')
                     modify_message = f'{bullet_content} is too short, please add one more bullet point, other content should stay the same. Return the entire modified JSON.'
                     response = actor_agent.step(modify_message)
-                    input_token, output_token = account_token(response)
+                    input_token, output_token = account_token_enhanced(response, component='GenBulletContent-BlankSpace')
                     total_input_token_t += input_token
                     total_output_token_t += output_token
                     result_json = get_json_from_response(response.msgs[0].content)

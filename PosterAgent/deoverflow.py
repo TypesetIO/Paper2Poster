@@ -7,6 +7,7 @@ from camel.agents import ChatAgent
 
 from utils.wei_utils import *
 from .logger_config import get_logger, log_token_consumption, log_progress
+from .enhanced_token_tracker import account_token_enhanced
 
 logger = get_logger(__name__)
 
@@ -144,7 +145,12 @@ def deoverflow(args, actor_config, critic_config):
                 critic_agent.reset()
                 response = critic_agent.step(critic_msg)
                 resp = response.msgs[0].content
-                input_token, output_token = account_token(response)
+                # Use enhanced tracking for vision model call
+                input_token, output_token = account_token_enhanced(
+                    response,
+                    component=f'Deoverflow-Critic-{section_name}',
+                    messages=[critic_msg]
+                )
                 total_input_token += input_token
                 total_output_token += output_token
                 if not leaf_section in critic_logs:

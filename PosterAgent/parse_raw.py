@@ -23,9 +23,9 @@ import PIL
 from marker.models import create_model_dict
 
 from utils.wei_utils import *
-
 from utils.pptx_utils import *
 from utils.critic_utils import *
+from .enhanced_token_tracker import account_token_enhanced
 import torch
 from jinja2 import Template
 import re
@@ -94,7 +94,7 @@ def parse_raw(args, actor_config, version=1):
         )
         actor_agent.reset()
         response = actor_agent.step(prompt)
-        input_token, output_token = account_token(response)
+        input_token, output_token = account_token_enhanced(response, component='ParseRaw')
 
         content_json = get_json_from_response(response.msgs[0].content)
 

@@ -14,6 +14,7 @@ from camel.messages import BaseMessage
 from utils.pptx_utils import *
 from utils.wei_utils import *
 from .logger_config import get_logger, log_token_consumption, log_error_and_retry
+from .enhanced_token_tracker import account_token_enhanced
 
 logger = get_logger(__name__)
 
@@ -301,7 +302,7 @@ def filter_image_table(args, filter_config):
     filter_prompt = jinja_env.from_string(config_filter["template"])
     filter_actor_agent.reset()
     response = filter_actor_agent.step(filter_prompt.render(**filter_jinja_args))
-    input_token, output_token = account_token(response)
+    input_token, output_token = account_token_enhanced(response, component='FilterImageTable')
     response_json = get_json_from_response(response.msgs[0].content)
     table_information = response_json['table_information']
     image_information = response_json['image_information']
@@ -368,7 +369,7 @@ def gen_outline_layout_v2(args, actor_config):
     planner_prompt = outline_template.render(**planner_jinja_args)
     planner_agent.reset()
     response = planner_agent.step(planner_prompt)
-    input_token, output_token = account_token(response)
+    input_token, output_token = account_token_enhanced(response, component='GenOutline-Planner')
     total_input_token += input_token
     total_output_token += output_token
 

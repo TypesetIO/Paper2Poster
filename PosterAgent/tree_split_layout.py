@@ -633,7 +633,6 @@ def main_inference(
         p["rp"] = rp
 
     layout_loss, panel_arrangement = generate_constrained_layout(paper_panels, poster_width, poster_height, title_height_ratio=0.1)
-    logger.info(f"Panel layout cost: {layout_loss}")
     for p in panel_arrangement:
         logger.info(f"Panel: {p}")
 
